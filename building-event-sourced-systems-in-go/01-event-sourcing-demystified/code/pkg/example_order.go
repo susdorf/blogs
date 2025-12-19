@@ -36,39 +36,34 @@ type OrderShippedEvent struct {
 	ShippedAt  time.Time `json:"shipped_at"`
 }
 
-// Order represents the order state
+// Order represents the current state of an order
 type Order struct {
 	ID         string
 	Status     string
-	Items      []Item
-	Total      float64
 	Customer   string
+	Total      float64
 	TrackingNo string
 }
 
-// ReplayOrder rebuilds order state from events
-func ReplayOrder(events []Event) *Order {
-	order := &Order{}
-	for _, evt := range events {
-		switch evt.Type {
-		case "OrderPlaced":
-			var data struct {
-				Customer string  `json:"customer"`
-				Total    float64 `json:"total"`
-			}
-			json.Unmarshal(evt.Data, &data)
-			order.ID = evt.AggregateID
-			order.Status = "placed"
-			order.Customer = data.Customer
-			order.Total = data.Total
-		case "OrderShipped":
-			var data struct {
-				Tracking string `json:"tracking"`
-			}
-			json.Unmarshal(evt.Data, &data)
-			order.Status = "shipped"
-			order.TrackingNo = data.Tracking
+// Apply updates the order state based on an event
+func (o *Order) Apply(evt Event) {
+	switch evt.Type {
+	case "OrderPlaced":
+		var data struct {
+			Customer string  `json:"customer"`
+			Total    float64 `json:"total"`
 		}
+		json.Unmarshal(evt.Data, &data)
+		o.ID = evt.AggregateID
+		o.Status = "placed"
+		o.Customer = data.Customer
+		o.Total = data.Total
+	case "OrderShipped":
+		var data struct {
+			Tracking string `json:"tracking"`
+		}
+		json.Unmarshal(evt.Data, &data)
+		o.Status = "shipped"
+		o.TrackingNo = data.Tracking
 	}
-	return order
 }

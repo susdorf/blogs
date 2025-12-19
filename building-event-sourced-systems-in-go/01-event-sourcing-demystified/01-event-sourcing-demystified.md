@@ -291,38 +291,85 @@ func main() {
 
     // Replay to get current state
     events, _ := store.Load(ctx, orderID)
-    order := replayOrder(events)
+    order := &Order{}
+    for _, evt := range events {
+        order.Apply(evt)
+    }
 
     fmt.Printf("Order %s: status=%s, tracking=%s\n",
         order.ID, order.Status, order.TrackingNo)
 }
 
-func replayOrder(events []Event) *Order {
-    order := &Order{}
-    for _, evt := range events {
-        switch evt.Type {
-        case "OrderPlaced":
-            var data struct {
-                Customer string  `json:"customer"`
-                Total    float64 `json:"total"`
-            }
-            json.Unmarshal(evt.Data, &data)
-            order.ID = evt.AggregateID
-            order.Status = "placed"
-            order.Customer = data.Customer
-            order.Total = data.Total
-        case "OrderShipped":
-            var data struct {
-                Tracking string `json:"tracking"`
-            }
-            json.Unmarshal(evt.Data, &data)
-            order.Status = "shipped"
-            order.TrackingNo = data.Tracking
+// Order represents the current state of an order
+type Order struct {
+    ID         string
+    Status     string
+    Customer   string
+    Total      float64
+    TrackingNo string
+}
+
+// Apply updates the order state based on an event
+func (o *Order) Apply(evt Event) {
+    switch evt.Type {
+    case "OrderPlaced":
+        var data struct {
+            Customer string  `json:"customer"`
+            Total    float64 `json:"total"`
         }
+        json.Unmarshal(evt.Data, &data)
+        o.ID = evt.AggregateID
+        o.Status = "placed"
+        o.Customer = data.Customer
+        o.Total = data.Total
+    case "OrderShipped":
+        var data struct {
+            Tracking string `json:"tracking"`
+        }
+        json.Unmarshal(evt.Data, &data)
+        o.Status = "shipped"
+        o.TrackingNo = data.Tracking
     }
-    return order
 }
 ```
+
+
+## Running an Example
+
+Source: https://https://github.com/susdorf/blogs/building-event-sourced-systems-in-go/01-event-sourcing-demystified/code
+
+When you run the complete example, you'll see Event Sourcing in action:
+
+```
+=== Event Sourcing Demo ===
+
+1. Placing order...
+   -> Appended: OrderPlaced (version 0)
+2. Shipping order...
+   -> Appended: OrderShipped (version 1)
+
+=== Event Store Contents ===
+   [0] OrderPlaced | order-123 | v0
+   [1] OrderShipped | order-123 | v1
+
+=== Replaying Events ===
+   Applied OrderPlaced     -> status=placed
+   Applied OrderShipped    -> status=shipped
+
+=== Current State (reconstructed from events) ===
+   Order ID:   order-123
+   Customer:   Alice
+   Total:      99.99
+   Status:     shipped
+   Tracking:   TRK-456
+```
+
+Notice how:
+1. **Events are appended** to the store with incrementing versions
+2. **The event store** contains the complete history of what happened
+3. **Replaying events** reconstructs the current state step by step
+4. **The final state** is derived entirely from the event sequence
+
 
 ## When to Use Event Sourcing
 

@@ -336,7 +336,7 @@ func (o *Order) Apply(evt Event) {
 
 ## Running an Example
 
-Source: https://github.com/susdorf/blogs/tree/main/building-event-sourced-systems-in-go/01-event-sourcing-demystified/code
+Source: https://github.com/susdorf/building-event-sourced-systems-in-go/tree/main/01-event-sourcing-demystified/code
 
 When you run the complete example, you'll see Event Sourcing in action:
 

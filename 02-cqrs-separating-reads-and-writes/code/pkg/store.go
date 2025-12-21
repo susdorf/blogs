@@ -8,15 +8,13 @@ import (
 
 // EventStore persists and retrieves events
 type EventStore struct {
-	mu          sync.RWMutex
-	events      map[string][]any // aggregateID -> events
-	subscribers []func(event any) error
+	mu     sync.RWMutex
+	events map[string][]any // aggregateID -> events
 }
 
 func NewEventStore() *EventStore {
 	return &EventStore{
-		events:      make(map[string][]any),
-		subscribers: make([]func(event any) error, 0),
+		events: make(map[string][]any),
 	}
 }
 
@@ -26,16 +24,6 @@ func (s *EventStore) Append(ctx context.Context, aggregateID string, events []an
 	defer s.mu.Unlock()
 
 	s.events[aggregateID] = append(s.events[aggregateID], events...)
-
-	// Notify subscribers (projections)
-	for _, event := range events {
-		for _, subscriber := range s.subscribers {
-			if err := subscriber(event); err != nil {
-				return err
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -50,23 +38,16 @@ func (s *EventStore) Load(ctx context.Context, aggregateID string) ([]any, error
 	return result, nil
 }
 
-// Subscribe registers a handler to receive new events
-func (s *EventStore) Subscribe(handler func(event any) error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.subscribers = append(s.subscribers, handler)
-}
-
 // AggregateRepository provides load/save operations for aggregates
 type AggregateRepository struct {
-	store           *EventStore
-	eventDispatcher *EventDispatcher
+	store     *EventStore
+	readModel *OrderReadModel
 }
 
-func NewAggregateRepository(store *EventStore, eventDispatcher *EventDispatcher) *AggregateRepository {
+func NewAggregateRepository(store *EventStore, readModel *OrderReadModel) *AggregateRepository {
 	return &AggregateRepository{
-		store:           store,
-		eventDispatcher: eventDispatcher,
+		store:     store,
+		readModel: readModel,
 	}
 }
 
@@ -82,9 +63,9 @@ func (r *AggregateRepository) Save(ctx context.Context, aggregate *OrderAggregat
 		return err
 	}
 
-	// Dispatch to event handlers (projections)
+	// Update read model (projection)
 	for _, event := range events {
-		if err := r.eventDispatcher.Dispatch(event); err != nil {
+		if err := r.readModel.Apply(event); err != nil {
 			return err
 		}
 	}

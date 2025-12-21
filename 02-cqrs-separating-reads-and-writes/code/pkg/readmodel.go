@@ -40,59 +40,49 @@ func NewOrderReadModel() *OrderReadModel {
 	}
 }
 
-// Event handlers - each handles a specific event type
-
-func (rm *OrderReadModel) OnOrderPlaced(event OrderPlacedEvent) error {
+// Apply handles all events that affect this read model using a switch statement
+func (rm *OrderReadModel) Apply(event any) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	items := make([]ItemView, len(event.Items))
-	for i, item := range event.Items {
-		items[i] = ItemView{
-			ProductID: item.ProductID,
-			Name:      item.Name,
-			Quantity:  item.Quantity,
-			Price:     item.Price,
+	switch e := event.(type) {
+	case OrderPlacedEvent:
+		items := make([]ItemView, len(e.Items))
+		for i, item := range e.Items {
+			items[i] = ItemView{
+				ProductID: item.ProductID,
+				Name:      item.Name,
+				Quantity:  item.Quantity,
+				Price:     item.Price,
+			}
 		}
-	}
 
-	view := &OrderView{
-		OrderID:    event.OrderID,
-		CustomerID: event.CustomerID,
-		Status:     "placed",
-		Items:      items,
-		Total:      event.Total,
-		ItemCount:  len(event.Items),
-		CreatedAt:  event.PlacedAt,
-		UpdatedAt:  event.PlacedAt,
-	}
+		view := &OrderView{
+			OrderID:    e.OrderID,
+			CustomerID: e.CustomerID,
+			Status:     "placed",
+			Items:      items,
+			Total:      e.Total,
+			ItemCount:  len(e.Items),
+			CreatedAt:  e.PlacedAt,
+			UpdatedAt:  e.PlacedAt,
+		}
 
-	rm.orders[event.OrderID] = view
-	rm.byCustomer[event.CustomerID] = append(rm.byCustomer[event.CustomerID], view)
+		rm.orders[e.OrderID] = view
+		rm.byCustomer[e.CustomerID] = append(rm.byCustomer[e.CustomerID], view)
 
-	return nil
-}
+	case OrderShippedEvent:
+		if view, ok := rm.orders[e.OrderID]; ok {
+			view.Status = "shipped"
+			view.TrackingNo = e.TrackingNo
+			view.UpdatedAt = e.ShippedAt
+		}
 
-func (rm *OrderReadModel) OnOrderShipped(event OrderShippedEvent) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	if view, ok := rm.orders[event.OrderID]; ok {
-		view.Status = "shipped"
-		view.TrackingNo = event.TrackingNo
-		view.UpdatedAt = event.ShippedAt
-	}
-
-	return nil
-}
-
-func (rm *OrderReadModel) OnOrderCancelled(event OrderCancelledEvent) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-
-	if view, ok := rm.orders[event.OrderID]; ok {
-		view.Status = "cancelled"
-		view.UpdatedAt = event.CancelledAt
+	case OrderCancelledEvent:
+		if view, ok := rm.orders[e.OrderID]; ok {
+			view.Status = "cancelled"
+			view.UpdatedAt = e.CancelledAt
+		}
 	}
 
 	return nil
@@ -138,11 +128,4 @@ func (rm *OrderReadModel) ListByCustomer(customerID, status string, page, pageSi
 	}
 
 	return orders[start:end], nil
-}
-
-// SetupOrderProjection registers all event handlers for the read model
-func SetupOrderProjection(dispatcher *EventDispatcher, readModel *OrderReadModel) {
-	RegisterEventHandler(dispatcher, readModel.OnOrderPlaced)
-	RegisterEventHandler(dispatcher, readModel.OnOrderShipped)
-	RegisterEventHandler(dispatcher, readModel.OnOrderCancelled)
 }

@@ -107,71 +107,45 @@ Commands are processed by **Command Handlers** that:
 3. Execute business logic
 4. Emit events
 
-A naive approach uses a switch statement, but this quickly becomes unwieldy. A more elegant solution uses **typed handler functions** registered by command type:
+A simple switch statement routes each command to its handler:
 
 ```go
-// CommandHandlerFunc is a typed handler for a specific command
-type CommandHandlerFunc[T any] func(ctx context.Context, cmd T) error
-
-// CommandDispatcher routes commands to their registered handlers
-type CommandDispatcher struct {
-    handlers map[reflect.Type]any
-}
-
-func NewCommandDispatcher() *CommandDispatcher {
-    return &CommandDispatcher{
-        handlers: make(map[reflect.Type]any),
-    }
-}
-
-// Register adds a typed handler for a specific command type
-func Register[T any](d *CommandDispatcher, handler CommandHandlerFunc[T]) {
-    var zero T
-    d.handlers[reflect.TypeOf(zero)] = handler
-}
-
-// Dispatch routes a command to its registered handler
-func (d *CommandDispatcher) Dispatch(ctx context.Context, cmd any) error {
-    handler, ok := d.handlers[reflect.TypeOf(cmd)]
-    if !ok {
-        return fmt.Errorf("no handler for command: %T", cmd)
-    }
-    // Type-safe invocation via reflection
-    return invokeHandler(ctx, handler, cmd)
-}
-```
-
-Each command handler is a standalone function, registered at startup:
-
-```go
-type OrderCommandHandlers struct {
+type CommandHandler struct {
     repository *AggregateRepository
 }
 
-func (h *OrderCommandHandlers) HandlePlaceOrder(ctx context.Context, cmd PlaceOrder) error {
-    order := NewOrderAggregate(cmd.OrderID)
-    if err := order.Place(cmd.CustomerID, cmd.Items); err != nil {
-        return err
-    }
-    return h.repository.Save(ctx, order)
-}
+func (h *CommandHandler) Handle(ctx context.Context, cmd any) error {
+    switch c := cmd.(type) {
+    case PlaceOrder:
+        order := NewOrderAggregate(c.OrderID)
+        if err := order.Place(c.CustomerID, c.Items); err != nil {
+            return err
+        }
+        return h.repository.Save(ctx, order)
 
-func (h *OrderCommandHandlers) HandleCancelOrder(ctx context.Context, cmd CancelOrder) error {
-    order, err := h.repository.Load(ctx, cmd.OrderID)
-    if err != nil {
-        return err
-    }
-    if err := order.Cancel(cmd.Reason); err != nil {
-        return err
-    }
-    return h.repository.Save(ctx, order)
-}
+    case CancelOrder:
+        order, err := h.repository.Load(ctx, c.OrderID)
+        if err != nil {
+            return err
+        }
+        if err := order.Cancel(c.Reason); err != nil {
+            return err
+        }
+        return h.repository.Save(ctx, order)
 
-// Registration at startup
-func SetupCommandHandlers(dispatcher *CommandDispatcher, repo *AggregateRepository) {
-    handlers := &OrderCommandHandlers{repository: repo}
-    Register(dispatcher, handlers.HandlePlaceOrder)
-    Register(dispatcher, handlers.HandleCancelOrder)
+    case ShipOrder:
+        order, err := h.repository.Load(ctx, c.OrderID)
+        if err != nil {
+            return err
+        }
+        if err := order.Ship(c.TrackingNo); err != nil {
+            return err
+        }
+        return h.repository.Save(ctx, order)
+
+    default:
+        return fmt.Errorf("unknown command: %T", cmd)
+    }
 }
 ```
 
@@ -198,107 +172,30 @@ type GetOrderStatistics struct {
 }
 ```
 
-Queries are handled by **Query Handlers** that read from optimized **Read Models**. Following the same pattern as commands, we use typed handler registration:
+Queries are handled by **Query Handlers** that read from optimized **Read Models**. A simple switch statement routes each query:
 
 ```go
-// QueryHandlerFunc is a typed handler returning a specific result type
-type QueryHandlerFunc[Q any, R any] func(ctx context.Context, query Q) (R, error)
-
-// QueryDispatcher routes queries to their registered handlers
-type QueryDispatcher struct {
-    handlers map[reflect.Type]any
-}
-
-func NewQueryDispatcher() *QueryDispatcher {
-    return &QueryDispatcher{
-        handlers: make(map[reflect.Type]any),
-    }
-}
-
-// RegisterQuery adds a typed handler for a specific query type
-func RegisterQuery[Q any, R any](d *QueryDispatcher, handler QueryHandlerFunc[Q, R]) {
-    var zero Q
-    d.handlers[reflect.TypeOf(zero)] = handler
-}
-
-// Query dispatches a query and returns the result
-func Query[R any](d *QueryDispatcher, ctx context.Context, query any) (R, error) {
-    var zero R
-    handler, ok := d.handlers[reflect.TypeOf(query)]
-    if !ok {
-        return zero, fmt.Errorf("no handler for query: %T", query)
-    }
-    return invokeQueryHandler[R](ctx, handler, query)
-}
-```
-
-Query handlers are standalone functions focused on a single query:
-
-```go
-type OrderQueryHandlers struct {
+type QueryHandler struct {
     readModel *OrderReadModel
 }
 
-func (h *OrderQueryHandlers) HandleGetOrder(ctx context.Context, q GetOrder) (*OrderView, error) {
-    return h.readModel.GetOrder(q.OrderID)
-}
+func (h *QueryHandler) Handle(ctx context.Context, query any) (any, error) {
+    switch q := query.(type) {
+    case GetOrder:
+        return h.readModel.GetOrder(q.OrderID)
 
-func (h *OrderQueryHandlers) HandleListByCustomer(ctx context.Context, q ListOrdersByCustomer) ([]*OrderView, error) {
-    return h.readModel.ListByCustomer(q.CustomerID, q.Status, q.Page, q.PageSize)
-}
+    case ListOrdersByCustomer:
+        return h.readModel.ListByCustomer(q.CustomerID, q.Status, q.Page, q.PageSize)
 
-// Registration at startup
-func SetupQueryHandlers(dispatcher *QueryDispatcher, readModel *OrderReadModel) {
-    handlers := &OrderQueryHandlers{readModel: readModel}
-    RegisterQuery(dispatcher, handlers.HandleGetOrder)
-    RegisterQuery(dispatcher, handlers.HandleListByCustomer)
+    default:
+        return nil, fmt.Errorf("unknown query: %T", query)
+    }
 }
 ```
 
 ## Read Models (Projections)
 
-Read models are denormalized views optimized for specific queries. They're built by processing events. Following the same pattern as commands and queries, we use typed event handler registration:
-
-```go
-// EventHandlerFunc is a typed handler for a specific event
-type EventHandlerFunc[T any] func(event T) error
-
-// EventDispatcher routes events to registered handlers (supports multiple handlers per event)
-type EventDispatcher struct {
-    handlers map[reflect.Type][]any
-}
-
-func NewEventDispatcher() *EventDispatcher {
-    return &EventDispatcher{
-        handlers: make(map[reflect.Type][]any),
-    }
-}
-
-// RegisterEventHandler adds a handler for a specific event type
-func RegisterEventHandler[T any](d *EventDispatcher, handler EventHandlerFunc[T]) {
-    var zero T
-    eventType := reflect.TypeOf(zero)
-    d.handlers[eventType] = append(d.handlers[eventType], handler)
-}
-
-// Dispatch sends an event to all registered handlers
-func (d *EventDispatcher) Dispatch(event any) error {
-    handlers, ok := d.handlers[reflect.TypeOf(event)]
-    if !ok {
-        return nil // No handlers for this event is valid
-    }
-    for _, handler := range handlers {
-        if err := invokeEventHandler(handler, event); err != nil {
-            return err
-        }
-    }
-    return nil
-}
-```
-
-**Important distinction**: Unlike commands and queries — where by convention exactly one handler processes each type — events can have **multiple handlers**. This is intentional: a single `OrderPlacedEvent` might update an `OrderReadModel`, a `CustomerStatisticsModel`, and an `InventoryProjection` simultaneously. The `EventDispatcher` stores handlers in a slice (`[]any`) rather than a single value, and iterates through all of them on dispatch.
-
-The read model registers handler functions for each event type it cares about:
+Read models are denormalized views optimized for specific queries. They're built by processing events:
 
 ```go
 type OrderView struct {
@@ -319,41 +216,39 @@ type OrderReadModel struct {
     byCustomer map[string][]*OrderView
 }
 
-// Each event handler is a separate method
-func (rm *OrderReadModel) OnOrderPlaced(event OrderPlacedEvent) error {
+// Apply handles all events that affect this read model
+func (rm *OrderReadModel) Apply(event any) error {
     rm.mu.Lock()
     defer rm.mu.Unlock()
 
-    view := &OrderView{
-        OrderID:    event.OrderID,
-        CustomerID: event.CustomerID,
-        Status:     "placed",
-        Items:      toItemViews(event.Items),
-        Total:      event.Total,
-        ItemCount:  len(event.Items),
-        CreatedAt:  event.PlacedAt,
-        UpdatedAt:  event.PlacedAt,
+    switch e := event.(type) {
+    case OrderPlacedEvent:
+        view := &OrderView{
+            OrderID:    e.OrderID,
+            CustomerID: e.CustomerID,
+            Status:     "placed",
+            Items:      toItemViews(e.Items),
+            Total:      e.Total,
+            ItemCount:  len(e.Items),
+            CreatedAt:  e.PlacedAt,
+            UpdatedAt:  e.PlacedAt,
+        }
+        rm.orders[e.OrderID] = view
+        rm.byCustomer[e.CustomerID] = append(rm.byCustomer[e.CustomerID], view)
+
+    case OrderShippedEvent:
+        if view, ok := rm.orders[e.OrderID]; ok {
+            view.Status = "shipped"
+            view.UpdatedAt = e.ShippedAt
+        }
+
+    case OrderCancelledEvent:
+        if view, ok := rm.orders[e.OrderID]; ok {
+            view.Status = "cancelled"
+            view.UpdatedAt = e.CancelledAt
+        }
     }
-    rm.orders[event.OrderID] = view
-    rm.byCustomer[event.CustomerID] = append(rm.byCustomer[event.CustomerID], view)
     return nil
-}
-
-func (rm *OrderReadModel) OnOrderShipped(event OrderShippedEvent) error {
-    rm.mu.Lock()
-    defer rm.mu.Unlock()
-
-    if view, ok := rm.orders[event.OrderID]; ok {
-        view.Status = "shipped"
-        view.UpdatedAt = event.ShippedAt
-    }
-    return nil
-}
-
-// Registration at startup
-func SetupOrderProjection(dispatcher *EventDispatcher, readModel *OrderReadModel) {
-    RegisterEventHandler(dispatcher, readModel.OnOrderPlaced)
-    RegisterEventHandler(dispatcher, readModel.OnOrderShipped)
 }
 
 // Queries are simple lookups
@@ -397,6 +292,22 @@ func (rm *OrderReadModel) ListByCustomer(customerID, status string, page, pageSi
     return orders[start:end], nil
 }
 ```
+
+### Why Projections Are Fast
+
+Custom projections include exactly the data your application needs — no more, no less. In practice, up to **95% of all requests** can be answered directly from projections, often **without touching a traditional database**. Most projections are stored in **memory** or **caching systems like Redis**, while the original events remain safely stored in the event store.
+
+In a traditional CRUD system, handling a single request often requires:
+- Calling **multiple backend services**
+- Performing **multiple live database queries**
+- Aggregating results manually
+
+With CQRS and projections:
+- A **single query endpoint** responds to the request
+- It uses a **precomputed projection** tailored for that use case
+- The data is **ready-to-serve**, without real-time joins or cross-service lookups
+
+This difference becomes dramatic at scale. Read-only requests are completely **decoupled** from write operations, enabling high performance without sacrificing consistency or traceability.
 
 ## Eventual Consistency
 
@@ -478,6 +389,58 @@ User clicks "Place Order"
 
 In **comby**, there's an option to simply wait until a command has finished executing, allowing users to decide whether or not to wait for each command as needed. In practice, users usually wait because the commands are called via the REST API, and REST APIs conventionally expect an updated model. **Comby** achieves this through so-called hooks, which are essentially channels that are sent across the network to subscribers as soon as they are ready. But that's a different, more complex issue.
 
+## Scaling with CQRS
+
+CQRS naturally supports distributed architectures. A common pattern uses a **single write instance** (or a designated set) responsible for processing all commands, while **multiple read instances** handle queries:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Distributed CQRS                                 │
+│                                                                         │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                │
+│  │ Read App A  │     │ Read App B  │     │ Read App C  │  (Scale out)   │
+│  │  (Queries)  │     │  (Queries)  │     │  (Queries)  │                │
+│  └──────┬──────┘     └──────┬──────┘     └──────┬──────┘                │
+│         │                   │                   │                       │
+│         │      Commands     │                   │                       │
+│         └─────────┬─────────┴─────────┬─────────┘                       │
+│                   │                   │                                 │
+│                   ▼                   │                                 │
+│           ┌─────────────┐             │                                 │
+│           │   Broker    │◄────────────┘                                 │
+│           │   (NATS)    │          Events                               │
+│           └──────┬──────┘                                               │
+│                  │                                                      │
+│                  ▼                                                      │
+│         ┌─────────────────┐                                             │
+│         │  Write App      │                                             │
+│         │  (Commands +    │  ◄── Single source of truth                 │
+│         │   Event Store)  │                                             │
+│         └─────────────────┘                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+In this setup:
+- **Read-only apps** handle queries directly from their local projections
+- **Commands** are forwarded to the write instance via a message broker
+- **Events** are published and distributed to all read instances
+- Each read instance **updates its own projections** from the event stream
+
+This architecture allows horizontal scaling of read capacity while maintaining consistency through a single authoritative write source. External applications can also subscribe to events without being part of the core system.
+
+## CQRS vs. Traditional CRUD
+
+| Feature                     | CRUD                                  | CQRS + Event Sourcing                          |
+|----------------------------|---------------------------------------|------------------------------------------------|
+| **Data Handling**          | Overwrites current state              | Appends immutable events; state is replayable  |
+| **State History**          | Lost unless manually tracked          | Full, built-in history via the event store     |
+| **Read/Write Models**      | Shared schema for reads & writes      | Separate models, each optimized for its purpose|
+| **Performance**            | Slower under contention               | High throughput; append-only writes + fast reads|
+| **Scalability**            | Mostly vertical; replication is hard  | Naturally horizontal                           |
+| **Auditing**               | Requires custom logging               | Built-in audit trail at the event level        |
+| **Consistency**            | Strong consistency (ACID)             | Eventual consistency                           |
+| **Complexity**             | Easier to start                       | More sophisticated, but highly flexible        |
+
 ## When CQRS Makes Sense
 
 CQRS adds complexity. Use it when:
@@ -496,57 +459,37 @@ Skip CQRS when:
 
 ## Putting It Together
 
-Here's how all dispatchers are wired together at application startup:
+Here's how all handlers are wired together at application startup:
 
 ```go
 package main
 
-// Application wires all dispatchers together
+// Application wires all handlers together
 type Application struct {
-    commands *CommandDispatcher
-    queries  *QueryDispatcher
-    events   *EventDispatcher
-
+    commands   *CommandHandler
+    queries    *QueryHandler
     eventStore *EventStore
     readModel  *OrderReadModel
 }
 
 func NewApplication() *Application {
-    // Create dispatchers
-    commands := NewCommandDispatcher()
-    queries := NewQueryDispatcher()
-    events := NewEventDispatcher()
-
     // Create infrastructure
     eventStore := NewEventStore()
     readModel := NewOrderReadModel()
     repository := NewAggregateRepository(eventStore)
 
-    // Register command handlers
-    orderCommands := &OrderCommandHandlers{repository: repository}
-    Register(commands, orderCommands.HandlePlaceOrder)
-    Register(commands, orderCommands.HandleCancelOrder)
-    Register(commands, orderCommands.HandleShipOrder)
+    // Create handlers
+    commands := &CommandHandler{repository: repository}
+    queries := &QueryHandler{readModel: readModel}
 
-    // Register query handlers
-    orderQueries := &OrderQueryHandlers{readModel: readModel}
-    RegisterQuery(queries, orderQueries.HandleGetOrder)
-    RegisterQuery(queries, orderQueries.HandleListByCustomer)
-
-    // Register event handlers (projections)
-    RegisterEventHandler(events, readModel.OnOrderPlaced)
-    RegisterEventHandler(events, readModel.OnOrderShipped)
-    RegisterEventHandler(events, readModel.OnOrderCancelled)
-
-    // Connect event store to event dispatcher
+    // Connect event store to read model
     eventStore.Subscribe(func(event any) error {
-        return events.Dispatch(event)
+        return readModel.Apply(event)
     })
 
     return &Application{
         commands:   commands,
         queries:    queries,
-        events:     events,
         eventStore: eventStore,
         readModel:  readModel,
     }
@@ -557,8 +500,8 @@ func main() {
     app := NewApplication()
     ctx := context.Background()
 
-    // Dispatch a command
-    err := app.commands.Dispatch(ctx, PlaceOrder{
+    // Handle a command
+    err := app.commands.Handle(ctx, PlaceOrder{
         OrderID:    "order-123",
         CustomerID: "customer-456",
         Items:      []OrderItem{{ProductID: "prod-1", Quantity: 2}},
@@ -568,19 +511,14 @@ func main() {
     }
 
     // Query the result (after projection catches up)
-    order, err := Query[*OrderView](app.queries, ctx, GetOrder{OrderID: "order-123"})
+    result, err := app.queries.Handle(ctx, GetOrder{OrderID: "order-123"})
     if err != nil {
         log.Fatal(err)
     }
+    order := result.(*OrderView)
     fmt.Printf("Order status: %s\n", order.Status)
 }
 ```
-
-This registry-based approach provides several benefits over switch statements:
-- **Type safety**: Each handler has its exact input/output types
-- **Separation of concerns**: Handlers are standalone, testable functions
-- **Extensibility**: Adding new commands/queries/events requires no changes to dispatchers
-- **Framework evolution**: The registration mechanism can be extended (validation, middleware, etc.)
 
 ## Running an Example
 
@@ -634,12 +572,9 @@ Notice how:
 2. **Queries return optimized views** — `GetOrder` and `ListOrdersByCustomer` read from denormalized projections
 3. **Events update read models** — The `OrderReadModel` is automatically updated when events are dispatched
 4. **Business rules are enforced** — A cancelled order cannot be shipped (the aggregate protects its invariants)
-5. **Typed dispatch** — Each handler is registered by its command/query/event type, no switch statements needed
 
 ---
 
 ## What's Next
 
 In the next post, we'll explore **Aggregates** — the consistency boundaries that encapsulate business logic and ensure data integrity in an event-sourced system.
-
-*This is Part 2 of the "Building Event-Sourced Systems in Go" series. We've seen how CQRS separates concerns and enables optimization. Next, we'll dive into the heart of domain logic: Aggregates.*

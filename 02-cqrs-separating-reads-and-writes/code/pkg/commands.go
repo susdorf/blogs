@@ -23,12 +23,25 @@ type ShipOrder struct {
 	TrackingNo string
 }
 
-// OrderCommandHandlers contains all order-related command handlers
-type OrderCommandHandlers struct {
+// CommandHandler routes commands using a simple switch statement
+type CommandHandler struct {
 	Repository *AggregateRepository
 }
 
-func (h *OrderCommandHandlers) HandlePlaceOrder(ctx context.Context, cmd PlaceOrder) error {
+func (h *CommandHandler) Handle(ctx context.Context, cmd any) error {
+	switch c := cmd.(type) {
+	case PlaceOrder:
+		return h.handlePlaceOrder(ctx, c)
+	case CancelOrder:
+		return h.handleCancelOrder(ctx, c)
+	case ShipOrder:
+		return h.handleShipOrder(ctx, c)
+	default:
+		return fmt.Errorf("unknown command: %T", cmd)
+	}
+}
+
+func (h *CommandHandler) handlePlaceOrder(ctx context.Context, cmd PlaceOrder) error {
 	// Validate
 	if cmd.OrderID == "" {
 		return fmt.Errorf("order ID is required")
@@ -52,7 +65,7 @@ func (h *OrderCommandHandlers) HandlePlaceOrder(ctx context.Context, cmd PlaceOr
 	return h.Repository.Save(ctx, order)
 }
 
-func (h *OrderCommandHandlers) HandleCancelOrder(ctx context.Context, cmd CancelOrder) error {
+func (h *CommandHandler) handleCancelOrder(ctx context.Context, cmd CancelOrder) error {
 	// Load existing aggregate
 	order, err := h.Repository.Load(ctx, cmd.OrderID)
 	if err != nil {
@@ -68,7 +81,7 @@ func (h *OrderCommandHandlers) HandleCancelOrder(ctx context.Context, cmd Cancel
 	return h.Repository.Save(ctx, order)
 }
 
-func (h *OrderCommandHandlers) HandleShipOrder(ctx context.Context, cmd ShipOrder) error {
+func (h *CommandHandler) handleShipOrder(ctx context.Context, cmd ShipOrder) error {
 	// Validate
 	if cmd.TrackingNo == "" {
 		return fmt.Errorf("tracking number is required")
@@ -87,12 +100,4 @@ func (h *OrderCommandHandlers) HandleShipOrder(ctx context.Context, cmd ShipOrde
 
 	// Persist
 	return h.Repository.Save(ctx, order)
-}
-
-// SetupCommandHandlers registers all order command handlers
-func SetupCommandHandlers(dispatcher *CommandDispatcher, repo *AggregateRepository) {
-	handlers := &OrderCommandHandlers{Repository: repo}
-	RegisterCommand(dispatcher, handlers.HandlePlaceOrder)
-	RegisterCommand(dispatcher, handlers.HandleCancelOrder)
-	RegisterCommand(dispatcher, handlers.HandleShipOrder)
 }

@@ -593,4 +593,4 @@ Notice how:
 
 ## What's Next
 
-In the next post, we'll explore **Aggregates** — the consistency boundaries that encapsulate business logic and ensure data integrity in an event-sourced system.
+In the next post, we'll explore **Part 03: Aggregates** — the consistency boundaries that encapsulate business logic and ensure data integrity in an event-sourced system.

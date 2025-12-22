@@ -686,4 +686,4 @@ Notice how:
 
 ## What's Next
 
-Now that we understand the conceptual foundations — Event Sourcing, CQRS, and Aggregates — it's time to dive into Go-specific implementation patterns. In the next post, we'll explore **Functional Options** — a powerful pattern for flexible, extensible configuration.
+Now that we understand the conceptual foundations — Event Sourcing, CQRS, and Aggregates — it's time to dive into Go-specific implementation patterns. In the next post, we'll explore **Part 04: Functional Options** — a powerful pattern for flexible, extensible configuration.
